@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+__pycache__
+bin
+obj
+target
+.idea
+.vscode
+*.log
+.env
+.env.*
+README.md
+scripts
