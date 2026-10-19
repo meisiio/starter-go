@@ -5,7 +5,7 @@
 *.go                @backend-team
 
 #Dev-ops 
-Dockerfile          @devops-group
+Dockerfile          @devops-lead
 docker-compose.yml  @devops-lead
 
 #documentation
