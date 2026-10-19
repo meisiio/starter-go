@@ -1,0 +1,12 @@
+# team - lead
+*                   @meisiio
+
+#go back-end
+*.go                @backend-team
+
+#Dev-ops 
+Dockerfile          @devops-lead
+docker-compose.yml  @devops-lead
+
+#documentation
+/docs/              @docs-team
