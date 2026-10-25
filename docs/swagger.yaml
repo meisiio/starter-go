@@ -1,21 +1,166 @@
 basePath: /
 definitions:
+  main.Discrepancy:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      difference_amount:
+        $ref: '#/definitions/main.Money'
+      gateway_amount:
+        $ref: '#/definitions/main.Money'
+      id:
+        type: string
+      job_id:
+        type: string
+      ledger_amount:
+        $ref: '#/definitions/main.Money'
+      resolution_notes:
+        type: string
+      resolved_by:
+        type: string
+      status:
+        type: string
+      transaction_reference:
+        type: string
+      type:
+        type: string
+    type: object
+  main.ExceptionsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/main.Discrepancy'
+        type: array
+      next_cursor:
+        type: string
+    type: object
   main.HealthResponse:
     properties:
+      service:
+        example: S6-RCN
+        type: string
       status:
         example: ok
         type: string
+      timestamp:
+        example: "2026-10-25T16:51:29Z"
+        type: string
+      version:
+        example: 1.0.0
+        type: string
     type: object
-host: 127.0.0.1:8080
+  main.Money:
+    properties:
+      amount:
+        type: integer
+      currency:
+        type: string
+    type: object
+  main.ProblemDetails:
+    properties:
+      code:
+        type: string
+      correlation_id:
+        type: string
+      detail:
+        type: string
+      status:
+        type: integer
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  main.ReadyResponse:
+    properties:
+      database:
+        example: connected
+        type: string
+      service:
+        example: S6-RCN
+        type: string
+      status:
+        example: ready
+        type: string
+      timestamp:
+        example: "2026-10-25T16:51:29Z"
+        type: string
+    type: object
+  main.ReconciliationJob:
+    properties:
+      created_at:
+        type: string
+      discrepancy_count:
+        example: 0
+        type: integer
+      from_time:
+        type: string
+      id:
+        example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+        type: string
+      matched_count:
+        example: 350
+        type: integer
+      status:
+        example: COMPLETED
+        type: string
+      to_time:
+        type: string
+      total_amount_reconciled:
+        $ref: '#/definitions/main.Money'
+    type: object
+host: localhost:8086
 info:
-  contact: {}
-  description: S6-RCN reconciliation service.
-  title: S6-RCN Reconciliation Service
-  version: "1.0"
+  contact:
+    email: rcn-team@labbank.example
+    name: S6-RCN Engineering Team
+  description: Official OpenAPI Specification for LabBank Reconciliation & Exceptions
+    Service (S6-RCN).
+  title: LabBank - S6-RCN Reconciliation & Exceptions Service API
+  version: 1.0.0
 paths:
+  /api/v1/exceptions:
+    get:
+      description: Retrieve a paginated list of financial discrepancies identified
+        by reconciliation jobs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.ExceptionsResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.ProblemDetails'
+      summary: List discrepancies and exceptions
+      tags:
+      - Reconciliation Exceptions
+  /api/v1/reconciliations/jobs:
+    post:
+      description: Start a new reconciliation run between Ledger (S2) and Settlement
+        Gateway (S5).
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/main.ReconciliationJob'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.ProblemDetails'
+      summary: Trigger reconciliation job
+      tags:
+      - Reconciliation Jobs
   /health:
     get:
-      description: Check service health and availability
+      description: Returns process health status (GEN-10). Does not verify external
+        dependencies.
       produces:
       - application/json
       responses:
@@ -23,7 +168,25 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/main.HealthResponse'
-      summary: Health Check
+      summary: Liveness health check
       tags:
-      - health
+      - System Health
+  /ready:
+    get:
+      description: Returns readiness of dependencies such as PostgreSQL database connectivity
+        (GEN-10).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.ReadyResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/main.ProblemDetails'
+      summary: Readiness health check
+      tags:
+      - System Health
 swagger: "2.0"
