@@ -16,7 +16,6 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		// Match only this path, not a prefix.
 		if r.URL.Path != "/health" {
 			http.NotFound(w, r)
 			return
@@ -27,9 +26,16 @@ func main() {
 		}
 	})
 
+	// uncomment after creating the functions
+	mux.HandleFunc("GET /ready", handleReady)
+	mux.HandleFunc("POST /api/v1/reconciliation-runs", handleCreateRun)
+	mux.HandleFunc("GET /api/v1/cases", handleListCases)
+
+	handler := withCorrelationID(withLogging(mux))
+
 	server := &http.Server{
 		Addr:              address,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
