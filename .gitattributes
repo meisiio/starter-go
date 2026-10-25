@@ -1,6 +1,45 @@
-* text=auto
-*.sh text eol=lf
+# Auto-detect text files and normalize line endings to LF
+* text=auto eol=lf
+
+# Explicit text files normalized to LF
 *.go text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
 *.py text eol=lf
-*.java text eol=lf
-*.cs text eol=lf
+*.env* text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.dockerignore text eol=lf
+Dockerfile text eol=lf
+CODEOWNERS text eol=lf
+
+# Explicit binary files - prevents git from modifying line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.tar binary
+*.tar.gz binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary

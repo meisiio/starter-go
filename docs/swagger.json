@@ -1,0 +1,280 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Official OpenAPI Specification for LabBank Reconciliation \u0026 Exceptions Service (S6-RCN).",
+        "title": "LabBank - S6-RCN Reconciliation \u0026 Exceptions Service API",
+        "contact": {
+            "name": "S6-RCN Engineering Team",
+            "email": "rcn-team@labbank.example"
+        },
+        "version": "1.0.0"
+    },
+    "host": "localhost:8086",
+    "basePath": "/",
+    "paths": {
+        "/api/v1/exceptions": {
+            "get": {
+                "description": "Retrieve a paginated list of financial discrepancies identified by reconciliation jobs.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Reconciliation Exceptions"
+                ],
+                "summary": "List discrepancies and exceptions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.ExceptionsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/main.ProblemDetails"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/reconciliations/jobs": {
+            "post": {
+                "description": "Start a new reconciliation run between Ledger (S2) and Settlement Gateway (S5).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Reconciliation Jobs"
+                ],
+                "summary": "Trigger reconciliation job",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/main.ReconciliationJob"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/main.ProblemDetails"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Returns process health status (GEN-10). Does not verify external dependencies.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Health"
+                ],
+                "summary": "Liveness health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/ready": {
+            "get": {
+                "description": "Returns readiness of dependencies such as PostgreSQL database connectivity (GEN-10).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System Health"
+                ],
+                "summary": "Readiness health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.ReadyResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/main.ProblemDetails"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "main.Discrepancy": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "difference_amount": {
+                    "$ref": "#/definitions/main.Money"
+                },
+                "gateway_amount": {
+                    "$ref": "#/definitions/main.Money"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "job_id": {
+                    "type": "string"
+                },
+                "ledger_amount": {
+                    "$ref": "#/definitions/main.Money"
+                },
+                "resolution_notes": {
+                    "type": "string"
+                },
+                "resolved_by": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "transaction_reference": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.ExceptionsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/main.Discrepancy"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "string",
+                    "example": "S6-RCN"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2026-10-25T16:51:29Z"
+                },
+                "version": {
+                    "type": "string",
+                    "example": "1.0.0"
+                }
+            }
+        },
+        "main.Money": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "currency": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.ProblemDetails": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "correlation_id": {
+                    "type": "string"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.ReadyResponse": {
+            "type": "object",
+            "properties": {
+                "database": {
+                    "type": "string",
+                    "example": "connected"
+                },
+                "service": {
+                    "type": "string",
+                    "example": "S6-RCN"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ready"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2026-10-25T16:51:29Z"
+                }
+            }
+        },
+        "main.ReconciliationJob": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "discrepancy_count": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "from_time": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                },
+                "matched_count": {
+                    "type": "integer",
+                    "example": 350
+                },
+                "status": {
+                    "type": "string",
+                    "example": "COMPLETED"
+                },
+                "to_time": {
+                    "type": "string"
+                },
+                "total_amount_reconciled": {
+                    "$ref": "#/definitions/main.Money"
+                }
+            }
+        }
+    }
+}
