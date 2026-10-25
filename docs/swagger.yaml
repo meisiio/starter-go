@@ -1,0 +1,29 @@
+basePath: /
+definitions:
+  main.HealthResponse:
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
+host: 127.0.0.1:8080
+info:
+  contact: {}
+  description: S6-RCN reconciliation service.
+  title: S6-RCN Reconciliation Service
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Check service health and availability
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.HealthResponse'
+      summary: Health Check
+      tags:
+      - health
+swagger: "2.0"
