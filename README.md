@@ -72,6 +72,27 @@ on macOS/Linux use `python3`. No extra Python packages are needed for this check
 The server must already be running. The script checks GET, the rejected POST method,
 and an unknown route. It exits with a nonzero status on failure.
 
+## Swagger & OpenAPI Documentation
+
+This service generates an OpenAPI schema using `swaggo/swag` and serves interactive Swagger UI via `http-swagger`.
+
+### Regenerating Docs
+
+If you add new endpoints or update comments in `main.go`, regenerate the schemas by running:
+
+```bash
+swag init
+```
+
+*(If `swag` is not in your PATH, run `$(go env GOPATH)/bin/swag init` or install it with `go install github.com/swaggo/swag/cmd/swag@latest`)*
+
+### Accessing OpenAPI & Swagger UI
+
+When the service is running (`go run .`):
+- **Interactive Swagger UI**: [http://127.0.0.1:8080/swagger/index.html](http://127.0.0.1:8080/swagger/index.html)
+- **OpenAPI Schema (JSON)**: [http://127.0.0.1:8080/swagger/doc.json](http://127.0.0.1:8080/swagger/doc.json)
+- **OpenAPI Schema (YAML)**: Located in `docs/swagger.yaml` (can be viewed/edited at [editor.swagger.io](https://editor.swagger.io))
+
 ## Run with Docker
 
 From the repository root:
