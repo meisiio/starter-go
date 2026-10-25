@@ -9,3 +9,11 @@ Thumbs.db
 *.log
 starter
 starter.exe
+
+# Dependencies and build outputs
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
