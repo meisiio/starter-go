@@ -1,0 +1,483 @@
+openapi: 3.0.3
+info:
+  title: LabBank - S6-RCN Reconciliation & Exceptions Service API
+  description: >
+    Official OpenAPI Specification for LabBank Reconciliation & Exceptions Service (S6-RCN).
+    This service is responsible for reconciling independent financial records between the
+    Ledger & Balance Service (S2-LDG) and Clearing & Settlement Gateway (S5-STL),
+    identifying financial discrepancies, and managing human-approved resolution workflows.
+  version: 1.0.0
+  contact:
+    name: S6-RCN Engineering Team
+    email: rcn-team@labbank.example
+
+servers:
+  - url: http://localhost:8086
+    description: Local development environment
+
+paths:
+  /health:
+    get:
+      summary: Liveness health check
+      description: Returns process health status (GEN-10). Does not verify external dependencies.
+      operationId: getHealth
+      tags:
+        - System Health
+      responses:
+        '200':
+          description: Service process is alive and responsive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      summary: Readiness health check
+      description: Returns readiness of dependencies such as PostgreSQL database connectivity (GEN-10).
+      operationId: getReady
+      tags:
+        - System Health
+      responses:
+        '200':
+          description: Service and all dependencies (PostgreSQL) are operational
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+        '503':
+          description: Service dependency unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/reconciliations/jobs:
+    post:
+      summary: Trigger reconciliation job
+      description: >
+        Executes an automated reconciliation job comparing internal ledger entries (S2)
+        against external settlement clearing logs (S5) for a specified date/time window.
+      operationId: createReconciliationJob
+      tags:
+        - Reconciliation
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReconciliationRequest'
+      responses:
+        '201':
+          description: Reconciliation job created and started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationJob'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict or reused idempotency key with different payload
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/reconciliations/jobs/{id}:
+    get:
+      summary: Get reconciliation job details
+      description: Retrieves the status, execution summary, and discrepancy counts for a specific job.
+      operationId: getReconciliationJob
+      tags:
+        - Reconciliation
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - name: id
+          in: path
+          required: true
+          description: Unique UUID of the reconciliation job
+          schema:
+            type: string
+            format: uuid
+            example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+      responses:
+        '200':
+          description: Reconciliation job found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationJob'
+        '404':
+          description: Job not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/exceptions:
+    get:
+      summary: List discrepancies and exceptions
+      description: >
+        Returns a paginated list of exceptions/discrepancies discovered during reconciliation
+        (GEN-09 cursor pagination).
+      operationId: listExceptions
+      tags:
+        - Exceptions
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - name: status
+          in: query
+          required: false
+          description: Filter by exception status (e.g., OPEN, UNDER_REVIEW, RESOLVED, REJECTED)
+          schema:
+            type: string
+            enum: [OPEN, UNDER_REVIEW, RESOLVED, REJECTED]
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of records to return (max 200)
+          schema:
+            type: integer
+            default: 20
+            maximum: 200
+        - name: cursor
+          in: query
+          required: false
+          description: Cursor for pagination (ID of last seen record)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of reconciliation exceptions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExceptionListResponse'
+
+  /api/v1/exceptions/{id}:
+    get:
+      summary: Get exception details
+      description: Retrieves full details of a specific financial discrepancy.
+      operationId: getException
+      tags:
+        - Exceptions
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - name: id
+          in: path
+          required: true
+          description: Exception UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Exception details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscrepancyException'
+        '404':
+          description: Exception not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/exceptions/{id}/resolve:
+    patch:
+      summary: Propose or apply resolution to an exception
+      description: >
+        Submits human-approved resolution action (e.g. manual ledger adjustment,
+        contacting settlement partner, or closing as timing difference).
+      operationId: resolveException
+      tags:
+        - Exceptions
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveExceptionRequest'
+      responses:
+        '200':
+          description: Exception resolution updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscrepancyException'
+        '404':
+          description: Exception not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  parameters:
+    XCorrelationID:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: Distributed tracing correlation identifier (GEN-08)
+      schema:
+        type: string
+        example: "0192a7e5-3b0d-7c55-9a51-0c7e2b1d8f40"
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Client-provided idempotency key for safe retries (GEN-07)
+      schema:
+        type: string
+        example: "7e4b2d1c-8a90-4e12-b5f6-3a7c9d0e1f2a"
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - service
+        - timestamp
+      properties:
+        status:
+          type: string
+          example: "ok"
+        service:
+          type: string
+          example: "S6-RCN"
+        version:
+          type: string
+          example: "1.0.0"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-10-25T16:00:00Z"
+
+    ReadyResponse:
+      type: object
+      required:
+        - status
+        - service
+        - database
+        - timestamp
+      properties:
+        status:
+          type: string
+          example: "ready"
+        service:
+          type: string
+          example: "S6-RCN"
+        database:
+          type: string
+          example: "connected"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-10-25T16:00:00Z"
+
+    CreateReconciliationRequest:
+      type: object
+      required:
+        - from_time
+        - to_time
+      properties:
+        from_time:
+          type: string
+          format: date-time
+          description: Start of reconciliation window (ISO-8601 UTC)
+          example: "2026-10-24T00:00:00Z"
+        to_time:
+          type: string
+          format: date-time
+          description: End of reconciliation window (ISO-8601 UTC)
+          example: "2026-10-24T23:59:59Z"
+        scope:
+          type: string
+          enum: [ALL, SATNA, PAYA, INTERNAL]
+          default: ALL
+
+    ReconciliationJob:
+      type: object
+      required:
+        - id
+        - status
+        - from_time
+        - to_time
+        - matched_count
+        - discrepancy_count
+        - total_amount_reconciled
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+        status:
+          type: string
+          enum: [PENDING, RUNNING, COMPLETED, FAILED]
+          example: "COMPLETED"
+        from_time:
+          type: string
+          format: date-time
+        to_time:
+          type: string
+          format: date-time
+        matched_count:
+          type: integer
+          example: 1420
+        discrepancy_count:
+          type: integer
+          example: 3
+        total_amount_reconciled:
+          $ref: '#/components/schemas/Money'
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    DiscrepancyException:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - difference_amount
+        - description
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+        job_id:
+          type: string
+          format: uuid
+        transaction_reference:
+          type: string
+          example: "TX-20261025-998811"
+        type:
+          type: string
+          enum: [AMOUNT_MISMATCH, MISSING_IN_LEDGER, MISSING_IN_GATEWAY, DUPLICATE_ENTRY, STATUS_MISMATCH]
+          example: "AMOUNT_MISMATCH"
+        status:
+          type: string
+          enum: [OPEN, UNDER_REVIEW, RESOLVED, REJECTED]
+          example: "OPEN"
+        ledger_amount:
+          $ref: '#/components/schemas/Money'
+        gateway_amount:
+          $ref: '#/components/schemas/Money'
+        difference_amount:
+          $ref: '#/components/schemas/Money'
+        description:
+          type: string
+          example: "Discrepancy between Ledger (25,000,000 IRR) and Gateway Settlement (24,500,000 IRR)"
+        resolution_notes:
+          type: string
+          nullable: true
+        resolved_by:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    ExceptionListResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscrepancyException'
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor token for the next page (GEN-09)
+          example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+
+    ResolveExceptionRequest:
+      type: object
+      required:
+        - action
+        - notes
+        - operator_username
+      properties:
+        action:
+          type: string
+          enum: [RESOLVED, REJECTED, ADJUSTED]
+          example: "RESOLVED"
+        notes:
+          type: string
+          example: "Verified with clearing bank statement; manual adjustment scheduled."
+        operator_username:
+          type: string
+          example: "financial_auditor_01"
+
+    Money:
+      type: object
+      description: Monetary amount in Rials (GEN-03 standard)
+      required:
+        - amount
+        - currency
+      properties:
+        amount:
+          type: integer
+          format: int64
+          description: Amount as 64-bit integer in smallest currency unit (Rials)
+          example: 25000000
+        currency:
+          type: string
+          description: ISO 4217 Currency code
+          example: "IRR"
+
+    ProblemDetails:
+      type: object
+      description: RFC 9457 Problem Details object (GEN-06)
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri
+          example: "https://errors.labbank.example/not-found"
+        title:
+          type: string
+          example: "Resource not found"
+        status:
+          type: integer
+          example: 404
+        code:
+          type: string
+          example: "NOT_FOUND"
+        detail:
+          type: string
+          example: "No resource with id 0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+        correlation_id:
+          type: string
+          example: "0192a7e5-3b0d-7c55-9a51-0c7e2b1d8f40"
