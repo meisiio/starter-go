@@ -2,15 +2,15 @@
 *                   @rezaj123 @meisiio @HoseinMortezaei
 
 # Go Backend
-*.go                @rezaj123 @meisiio
+*.go                @rezaj123 @meisiio @HoseinMortezaei
 
 # Frontend
-/frontend/          @rezaj123 @HoseinMortezaei
+/frontend/          @rezaj123 @HoseinMortezaei @meisiio
 
 # DevOps & Infrastructure
 Dockerfile          @rezaj123 @meisiio @HoseinMortezaei
 docker-compose.yml  @rezaj123 @meisiio @HoseinMortezaei
 
 # Documentation
-/docs/              @rezaj123 @meisiio
-README.md           @rezaj123 @HoseinMortezaei
+/docs/              @rezaj123 @meisiio @HoseinMortezaei
+README.md           @rezaj123 @HoseinMortezaei @meisiio

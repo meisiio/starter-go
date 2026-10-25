@@ -1,19 +1,44 @@
-# Local settings and credentials
+# Environment & Secrets (GEN-12)
 .env
 .env.*
 !.env.example
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-*.log
+*.pem
+*.key
+.secrets*
+
+# Go Build & Binary Outputs
 starter
 starter.exe
-.venv/
+/server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+vendor/
 
-# Dependencies and build outputs
+# Frontend / Node Build Outputs
 node_modules/
 dist/
 dist-ssr/
-*.local
 .vite/
+*.local
+
+# Python Environments & Cache
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+
+# IDEs & System Files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*.log
