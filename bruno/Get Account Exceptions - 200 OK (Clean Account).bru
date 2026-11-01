@@ -1,0 +1,21 @@
+meta {
+  name: Get Account Exceptions - 200 OK (Clean Account)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/accounts/{{cleanAccountId}}/exceptions
+  body: none
+  auth: none
+}
+
+headers {
+  X-Correlation-ID: 0192a7e5-3b0d-7c55-9a51-0c7e2b1d8f40
+}
+
+assert {
+  res.status: eq 200
+  res.body: isDefined
+  res.body.length: eq 0
+}
