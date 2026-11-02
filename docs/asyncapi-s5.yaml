@@ -1,0 +1,310 @@
+asyncapi: '2.6.0'
+info:
+  title: S5 Settlement Gateway - S6 Reporting & Reconciliation Async API
+  version: '1.0.0'
+  description: >
+    مشخصات رابط ناهمگام (Event-Driven) بین سامانه S5 و سامانه S6
+    جهت انتشار گزارش‌های روزانه تسویه، پردازش دستورات استعلام، و دریافت نتایج تأییدیه/مغایرت.
+
+servers:
+  s6-kafka-cluster:
+    url: localhost:9092
+    protocol: kafka
+    description: کلاستر اشتراکی ارتباطی کافکا بین سامانه‌های S5 و S6
+
+channels:
+  lab.s5.s6.report.daily.v1:
+    description: تاپیک انتشار گزارش تجمیعی روزانه تراکنش‌های تسویه از سمت S5
+    publish:
+      operationId: publishDailyReport
+      summary: ارسال گزارش تسویه روزانه به صورت زمان‌بندی‌شده یا در پاسخ به استعلام
+      message:
+        $ref: '#/components/messages/SettlementDailyReportEvent'
+
+  lab.s6.s5.command.report.inquire.v1:
+    description: تاپیک دریافت فرامین استعلام گزارش روزانه از سمت S6
+    subscribe:
+      operationId: consumeReportInquiry
+      summary: دریافت درخواست استعلام مجدد گزارش برای یک روز کاری مشخص
+      message:
+        $ref: '#/components/messages/ReportInquiryCommand'
+
+  lab.s6.s5.event.report-result.v1:
+    description: تاپیک دریافت وضعیت تأیید یا رد گزارش از سمت سامانه S6
+    subscribe:
+      operationId: consumeReportResult
+      summary: دریافت تأییدیه نهایی (ACCEPTED) یا اعلام مغایرت (REJECTED) گزارش
+      message:
+        $ref: '#/components/messages/ReportResultEvent'
+
+components:
+  messages:
+    SettlementDailyReportEvent:
+      name: SettlementDailyReportEvent
+      title: رویداد گزارش روزانه تسویه
+      summary: رویداد انولوپ حاوی اطلاعات آماری و ریز تراکنش‌های تسویه
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SettlementDailyReportEnvelope'
+
+    ReportInquiryCommand:
+      name: ReportInquiryCommand
+      title: دستور استعلام گزارش تسویه
+      summary: درخواست سامانه S6 برای دریافت مجدد گزارش یک روز مشخص
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ReportInquiryEnvelope'
+
+    ReportResultEvent:
+      name: ReportResultEvent
+      title: رویداد نتیجه بررسی گزارش
+      summary: نتیجه پردازش گزارش توسط S6 شامل پذیرش یا رد مغایرت
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ReportResultEnvelope'
+
+  schemas:
+    # -------------------------------------------------------------
+    # ۱. مدل‌های مربوط به رویداد گزارش روزانه (Daily Report)
+    # -------------------------------------------------------------
+    SettlementDailyReportEnvelope:
+      type: object
+      required:
+        - message_id
+        - correlation_id
+        - producer
+        - message_type
+        - data
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        correlation_id:
+          type: string
+          format: uuid
+        causation_id:
+          type: string
+          format: uuid
+          nullable: true
+        producer:
+          type: string
+          example: "S5-STL"
+        message_type:
+          type: string
+          example: "SettlementDailyReport.v1"
+        data:
+          $ref: '#/components/schemas/SettlementReportData'
+
+    SettlementReportData:
+      type: object
+      required:
+        - report_id
+        - business_date
+        - generated_at
+        - summary
+        - transactions
+      properties:
+        report_id:
+          type: string
+          format: uuid
+        business_date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        generated_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: '#/components/schemas/SettlementReportSummary'
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SettlementReportItem'
+
+    SettlementReportSummary:
+      type: object
+      required:
+        - totalCount
+        - totalAmount
+        - successCount
+        - failedCount
+      properties:
+        totalCount:
+          type: integer
+          format: int64
+          minimum: 0
+        totalAmount:
+          type: integer
+          format: int64
+          minimum: 0
+        successCount:
+          type: integer
+          format: int64
+          minimum: 0
+        failedCount:
+          type: integer
+          format: int64
+          minimum: 0
+
+    SettlementReportItem:
+      type: object
+      required:
+        - transactionId
+        - sourceIban
+        - destinationIban
+        - amount
+        - currency
+        - settlementType
+        - status
+        - createdAt
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+        idempotencyKey:
+          type: string
+        sourceIban:
+          type: string
+          example: "IR120120000000000000000001"
+        destinationIban:
+          type: string
+          example: "IR120120000000000000000002"
+        amount:
+          type: integer
+          format: int64
+        currency:
+          type: string
+          example: "IRR"
+        settlementType:
+          type: string
+          enum: [PAYA, SATNA]
+        status:
+          type: string
+          enum: [SUCCESS, FAILED, PENDING]
+        failureReason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    # -------------------------------------------------------------
+    # ۲. مدل‌های مربوط به دستور استعلام گزارش (Inquiry)
+    # -------------------------------------------------------------
+    ReportInquiryEnvelope:
+      type: object
+      required:
+        - message_id
+        - correlation_id
+        - occurred_at
+        - producer
+        - message_type
+        - data
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        correlation_id:
+          type: string
+          format: uuid
+        occurred_at:
+          type: string
+          format: date-time
+        producer:
+          type: string
+          example: "S6-RECON"
+        message_type:
+          type: string
+          example: "ReportInquiryCommand.v1"
+        data:
+          $ref: '#/components/schemas/ReportInquiryData'
+
+    ReportInquiryData:
+      type: object
+      required:
+        - business_date
+      properties:
+        business_date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        report_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    # -------------------------------------------------------------
+    # ۳. مدل‌های مربوط به اعلام نتیجه گزارش (Report Result)
+    # -------------------------------------------------------------
+    ReportResultEnvelope:
+      type: object
+      required:
+        - message_id
+        - correlation_id
+        - producer
+        - message_type
+        - data
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        correlation_id:
+          type: string
+          format: uuid
+        causation_id:
+          type: string
+          format: uuid
+          nullable: true
+        producer:
+          type: string
+          example: "S6-RECON"
+        message_type:
+          type: string
+          example: "ReportResultEvent.v1"
+        data:
+          $ref: '#/components/schemas/ReportResultData'
+
+    ReportResultData:
+      type: object
+      required:
+        - report_id
+        - business_date
+        - outcome
+      properties:
+        report_id:
+          type: string
+          format: uuid
+        business_date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        outcome:
+          type: string
+          enum: [ACCEPTED, REJECTED]
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+        total_records_processed:
+          type: integer
+          format: int64
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ReportError'
+
+    ReportError:
+      type: object
+      nullable: true
+      properties:
+        code:
+          type: string
+          example: "COUNT_MISMATCH"
+        detail:
+          type: string
+          example: "Total record count does not match settlements received"
