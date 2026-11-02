@@ -15,6 +15,48 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// @title           LabBank - S6-RCN Reconciliation & Exceptions Service API
+// @version         1.0.0
+// @description     Official OpenAPI Specification for LabBank Reconciliation & Exceptions Service (S6-RCN).
+// @contact.name    S6-RCN Engineering Team
+// @contact.email   rcn-team@labbank.example
+// @host            localhost:8086
+// @BasePath        /
+
+// HealthResponse represents process liveness status.
+type HealthResponse struct {
+	Status    string `json:"status" example:"ok"`
+	Service   string `json:"service" example:"S6-RCN"`
+	Version   string `json:"version" example:"1.0.0"`
+	Timestamp string `json:"timestamp" example:"2026-10-25T16:51:29Z"`
+}
+
+// ReadyResponse represents readiness of dependencies such as PostgreSQL.
+type ReadyResponse struct {
+	Status    string `json:"status" example:"ready"`
+	Service   string `json:"service" example:"S6-RCN"`
+	Database  string `json:"database" example:"connected"`
+	Timestamp string `json:"timestamp" example:"2026-10-25T16:51:29Z"`
+}
+
+// ExceptionsResponse represents a paginated list of discrepancy exceptions.
+type ExceptionsResponse struct {
+	Items      []Discrepancy `json:"items"`
+	NextCursor *string       `json:"next_cursor"`
+}
+
+// ReconciliationJob represents a reconciliation execution job result.
+type ReconciliationJob struct {
+	ID                    string    `json:"id" example:"a1b2c3d4-e5f6-7890-abcd-ef1234567890"`
+	Status                string    `json:"status" example:"COMPLETED"`
+	FromTime              time.Time `json:"from_time"`
+	ToTime                time.Time `json:"to_time"`
+	MatchedCount          int       `json:"matched_count" example:"350"`
+	DiscrepancyCount      int       `json:"discrepancy_count" example:"0"`
+	TotalAmountReconciled Money     `json:"total_amount_reconciled"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
 // Config holds runtime configuration loaded from environment variables (GEN-12).
 type Config struct {
 	ServiceName string
@@ -47,15 +89,15 @@ func loadConfig() Config {
 	}
 	dbUser := os.Getenv("DB_USER")
 	if dbUser == "" {
-		dbUser = "admin"
+		dbUser = "postgres"
 	}
 	dbPassword := os.Getenv("DB_PASSWORD")
 	if dbPassword == "" {
-		dbPassword = "password"
+		dbPassword = "postgres"
 	}
 	dbName := os.Getenv("DB_NAME")
 	if dbName == "" {
-		dbName = "labbank_reconciliation"
+		dbName = "labbank_s6"
 	}
 	dbSSLMode := os.Getenv("DB_SSLMODE")
 	if dbSSLMode == "" {
@@ -305,8 +347,18 @@ func (s *Server) initDB() error {
 	return nil
 }
 
-// handleGetAccountExceptions implements GET /api/v1/accounts/{id}/exceptions (KAN-12).
-func (s *Server) handleGetAccountExceptions(w http.ResponseWriter, r *http.Request) {
+// GetAccountExceptionsHandler godoc
+// @Summary      Get exceptions by account ID (Consumer Loop Endpoint)
+// @Description  Enables Team 1 (Account - Consumer) to query discrepancy exceptions for a specific bank account.
+// @Tags         Reconciliation Exceptions
+// @Produce      json
+// @Param        id   path      string  true  "Target account UUID"
+// @Success      200  {array}   AccountExceptionItem
+// @Failure      400  {object}  ProblemDetails
+// @Failure      404  {object}  ProblemDetails
+// @Failure      500  {object}  ProblemDetails
+// @Router       /api/v1/accounts/{id}/exceptions [get]
+func (s *Server) GetAccountExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		p := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
@@ -375,6 +427,142 @@ func (s *Server) handleGetAccountExceptions(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(items)
 }
 
+// handleGetAccountExceptions is kept for backwards compatibility with tests.
+func (s *Server) handleGetAccountExceptions(w http.ResponseWriter, r *http.Request) {
+	s.GetAccountExceptionsHandler(w, r)
+}
+
+// HealthCheckHandler godoc
+// @Summary      Liveness health check
+// @Description  Returns process health status (GEN-10). Does not verify external dependencies.
+// @Tags         System Health
+// @Produce      json
+// @Success      200  {object}  HealthResponse
+// @Router       /health [get]
+func (s *Server) HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	resp := HealthResponse{
+		Status:    "ok",
+		Service:   s.cfg.ServiceName,
+		Version:   "1.0.0",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ReadinessCheckHandler godoc
+// @Summary      Readiness health check
+// @Description  Returns readiness of dependencies such as PostgreSQL database connectivity (GEN-10).
+// @Tags         System Health
+// @Produce      json
+// @Success      200  {object}  ReadyResponse
+// @Failure      503  {object}  ProblemDetails
+// @Router       /ready [get]
+func (s *Server) ReadinessCheckHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := s.db.PingContext(ctx); err != nil {
+		writeProblem(w, r, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Database Unavailable",
+			fmt.Sprintf("Failed to ping PostgreSQL database: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := ReadyResponse{
+		Status:    "ready",
+		Service:   s.cfg.ServiceName,
+		Database:  "connected",
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ListExceptionsHandler godoc
+// @Summary      List discrepancies and exceptions
+// @Description  Retrieve a paginated list of financial discrepancies identified by reconciliation jobs.
+// @Tags         Reconciliation Exceptions
+// @Produce      json
+// @Success      200  {object}  ExceptionsResponse
+// @Failure      500  {object}  ProblemDetails
+// @Router       /api/v1/exceptions [get]
+func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(job_id::text, ''), reference_id::text, discrepancy_type, status, 
+		       expected_amount, actual_amount, difference_amount, COALESCE(resolution_notes, ''), 
+		       created_at 
+		FROM exceptions 
+		ORDER BY created_at DESC 
+		LIMIT 50
+	`)
+	if err != nil {
+		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	items := make([]Discrepancy, 0)
+	for rows.Next() {
+		var d Discrepancy
+		var expectedAmt, actualAmt, diffAmt int64
+		var notes string
+		if err := rows.Scan(&d.ID, &d.JobID, &d.TransactionReference, &d.Type, &d.Status,
+			&expectedAmt, &actualAmt, &diffAmt, &notes, &d.CreatedAt); err != nil {
+			continue
+		}
+		d.LedgerAmount = Money{Amount: expectedAmt, Currency: "IRR"}
+		d.GatewayAmount = Money{Amount: actualAmt, Currency: "IRR"}
+		d.DifferenceAmount = Money{Amount: diffAmt, Currency: "IRR"}
+		d.Description = notes
+		if notes != "" {
+			d.ResolutionNotes = &notes
+		}
+		items = append(items, d)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(ExceptionsResponse{
+		Items:       items,
+		NextCursor: nil,
+	})
+}
+
+// TriggerJobHandler godoc
+// @Summary      Trigger reconciliation job
+// @Description  Start a new reconciliation run between Ledger (S2) and Settlement Gateway (S5).
+// @Tags         Reconciliation Jobs
+// @Produce      json
+// @Success      201  {object}  ReconciliationJob
+// @Failure      500  {object}  ProblemDetails
+// @Router       /api/v1/reconciliations/jobs [post]
+func (s *Server) TriggerJobHandler(w http.ResponseWriter, r *http.Request) {
+	jobID := uuid.NewString()
+	now := time.Now().UTC()
+	today := now.Format("2006-01-02")
+	_, err := s.db.Exec(`
+		INSERT INTO reconciliation_jobs (id, business_date, status, total_checked, matched_count, discrepancy_count, started_at, completed_at)
+		VALUES ($1, $2, 'COMPLETED', 350, 350, 0, $3, $4)
+	`, jobID, today, now.Add(-10*time.Minute), now)
+
+	if err != nil {
+		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to start reconciliation", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(ReconciliationJob{
+		ID:                    jobID,
+		Status:                "COMPLETED",
+		FromTime:              now.Add(-24 * time.Hour),
+		ToTime:                now,
+		MatchedCount:          350,
+		DiscrepancyCount:      0,
+		TotalAmountReconciled: Money{Amount: 12500000000, Currency: "IRR"},
+		CreatedAt:             now,
+	})
+}
+
 func main() {
 	cfg := loadConfig()
 
@@ -409,113 +597,22 @@ func main() {
 	mux := http.NewServeMux()
 
 	// 1. GET /health (Liveness health check - GEN-10)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
-			"status":    "ok",
-			"service":   cfg.ServiceName,
-			"version":   "1.0.0",
-			"timestamp": time.Now().UTC().Format(time.RFC3339),
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	})
+	mux.HandleFunc("GET /health", srv.HealthCheckHandler)
 
 	// 2. GET /ready (Readiness health check including DB - GEN-10)
-	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-
-		if err := srv.db.PingContext(ctx); err != nil {
-			writeProblem(w, r, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Database Unavailable",
-				fmt.Sprintf("Failed to ping PostgreSQL database: %v", err))
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
-			"status":    "ready",
-			"service":   cfg.ServiceName,
-			"database":  "connected",
-			"timestamp": time.Now().UTC().Format(time.RFC3339),
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	})
+	mux.HandleFunc("GET /ready", srv.ReadinessCheckHandler)
 
 	// 3. GET /api/v1/exceptions (List discrepancies with pagination - GEN-09)
-	mux.HandleFunc("GET /api/v1/exceptions", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := srv.db.Query(`
-			SELECT id, COALESCE(job_id::text, ''), reference_id::text, discrepancy_type, status, 
-			       expected_amount, actual_amount, difference_amount, COALESCE(resolution_notes, ''), 
-			       created_at 
-			FROM exceptions 
-			ORDER BY created_at DESC 
-			LIMIT 50
-		`)
-		if err != nil {
-			writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", err.Error())
-			return
-		}
-		defer rows.Close()
-
-		items := make([]Discrepancy, 0)
-		for rows.Next() {
-			var d Discrepancy
-			var expectedAmt, actualAmt, diffAmt int64
-			var notes string
-			if err := rows.Scan(&d.ID, &d.JobID, &d.TransactionReference, &d.Type, &d.Status,
-				&expectedAmt, &actualAmt, &diffAmt, &notes, &d.CreatedAt); err != nil {
-				continue
-			}
-			d.LedgerAmount = Money{Amount: expectedAmt, Currency: "IRR"}
-			d.GatewayAmount = Money{Amount: actualAmt, Currency: "IRR"}
-			d.DifferenceAmount = Money{Amount: diffAmt, Currency: "IRR"}
-			d.Description = notes
-			if notes != "" {
-				d.ResolutionNotes = &notes
-			}
-			items = append(items, d)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"items":       items,
-			"next_cursor": nil,
-		})
-	})
+	// 3. GET /api/v1/exceptions (List discrepancies with pagination - GEN-09)
+	mux.HandleFunc("GET /api/v1/exceptions", srv.ListExceptionsHandler)
 
 	// 4. GET /api/v1/accounts/{id}/exceptions (Loop endpoint for Team 1 Consumer - KAN-12)
-	mux.HandleFunc("GET /api/v1/accounts/{id}/exceptions", srv.handleGetAccountExceptions)
+	mux.HandleFunc("GET /api/v1/accounts/{id}/exceptions", srv.GetAccountExceptionsHandler)
 
 	// 5. POST /api/v1/reconciliations/jobs (Trigger reconciliation run)
-	mux.HandleFunc("POST /api/v1/reconciliations/jobs", func(w http.ResponseWriter, r *http.Request) {
-		jobID := uuid.NewString()
-		now := time.Now().UTC()
-		today := now.Format("2006-01-02")
-		_, err := srv.db.Exec(`
-			INSERT INTO reconciliation_jobs (id, business_date, status, total_checked, matched_count, discrepancy_count, started_at, completed_at)
-			VALUES ($1, $2, 'COMPLETED', 350, 350, 0, $3, $4)
-		`, jobID, today, now.Add(-10*time.Minute), now)
+	mux.HandleFunc("POST /api/v1/reconciliations/jobs", srv.TriggerJobHandler)
 
-		if err != nil {
-			writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to start reconciliation", err.Error())
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":                      jobID,
-			"business_date":           today,
-			"status":                  "COMPLETED",
-			"total_checked":           350,
-			"matched_count":           350,
-			"discrepancy_count":       0,
-			"total_amount_reconciled": Money{Amount: 12500000000, Currency: "IRR"},
-			"created_at":              now,
-		})
-	})
-
-	// 6. Serve OpenAPI files
+	// 6. Serve OpenAPI & Swagger files
 	mux.HandleFunc("GET /docs/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 		http.ServeFile(w, r, "docs/openapi.yaml")
@@ -523,6 +620,14 @@ func main() {
 	mux.HandleFunc("GET /docs/openapi.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		http.ServeFile(w, r, "docs/openapi.json")
+	})
+	mux.HandleFunc("GET /docs/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+		http.ServeFile(w, r, "docs/swagger.yaml")
+	})
+	mux.HandleFunc("GET /docs/swagger.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		http.ServeFile(w, r, "docs/swagger.json")
 	})
 
 	// 6. Serve Swagger UI at /swagger/
@@ -537,23 +642,30 @@ func main() {
   <link rel="icon" type="image/png" href="https://unpkg.com/swagger-ui-dist@5/favicon-32x32.png" />
   <style>
     body { margin: 0; background: #fafafa; }
-    .topbar { display: none; }
   </style>
 </head>
 <body>
   <div id="swagger-ui"></div>
   <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
   <script>
     window.onload = function() {
       SwaggerUIBundle({
-        url: "/docs/openapi.json",
+        url: "/docs/swagger.json",
+        urls: [
+          { url: "/docs/swagger.json", name: "Swagger 2.0 (Swag Generated)" },
+          { url: "/docs/openapi.json", name: "OpenAPI 3.0 (Contract-First)" }
+        ],
         dom_id: '#swagger-ui',
         deepLinking: true,
         presets: [
           SwaggerUIBundle.presets.apis,
-          SwaggerUIBundle.SwaggerUIStandalonePreset
+          SwaggerUIStandalonePreset
         ],
-        layout: "BaseLayout"
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "StandaloneLayout"
       });
     };
   </script>
