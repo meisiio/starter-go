@@ -1,0 +1,29 @@
+meta {
+  name: Get Account Exceptions - 200 OK
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/accounts/{{activeAccountId}}/exceptions
+  body: none
+  auth: none
+}
+
+headers {
+  X-Correlation-ID: 0192a7e5-3b0d-7c55-9a51-0c7e2b1d8f40
+}
+
+assert {
+  res.status: eq 200
+  res.body: isDefined
+  res.body[0].id: isDefined
+  res.body[0].reference_id: isDefined
+  res.body[0].discrepancy_type: isDefined
+  res.body[0].expected_amount: isDefined
+  res.body[0].actual_amount: isDefined
+  res.body[0].difference: isDefined
+  res.body[0].currency: eq "IRR"
+  res.body[0].status: isDefined
+  res.body[0].created_at: isDefined
+}

@@ -69,6 +69,7 @@ type Config struct {
 	DBPassword  string
 	DBName      string
 	DBSSLMode   string
+	S2BaseURL   string
 }
 
 func loadConfig() Config {
@@ -104,6 +105,10 @@ func loadConfig() Config {
 	if dbSSLMode == "" {
 		dbSSLMode = "disable"
 	}
+	s2BaseURL := os.Getenv("S2_LEDGER_BASE_URL")
+	if s2BaseURL == "" {
+		s2BaseURL = "http://localhost:8082"
+	}
 
 	return Config{
 		ServiceName: serviceName,
@@ -114,13 +119,15 @@ func loadConfig() Config {
 		DBPassword:  dbPassword,
 		DBName:      dbName,
 		DBSSLMode:   dbSSLMode,
+		S2BaseURL:   s2BaseURL,
 	}
 }
 
 // Server holds application state and dependencies.
 type Server struct {
-	cfg Config
-	db  *sql.DB
+	cfg      Config
+	db       *sql.DB
+	s2Client *S2Client
 }
 
 // ProblemDetails represents RFC 9457 error response (GEN-06).
@@ -257,59 +264,180 @@ type Discrepancy struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
+// AccountExceptionItem represents discrepancy item returned for Team 1 (Consumer).
+type AccountExceptionItem struct {
+	ID              string    `json:"id"`
+	ReferenceID     string    `json:"reference_id"`
+	DiscrepancyType string    `json:"discrepancy_type"`
+	ExpectedAmount  int64     `json:"expected_amount"`
+	ActualAmount    int64     `json:"actual_amount"`
+	Difference      int64     `json:"difference"`
+	Currency        string    `json:"currency"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 // initDB runs schema migrations and seeds initial reconciliation exceptions.
 func (s *Server) initDB() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS reconciliation_jobs (
 		id UUID PRIMARY KEY,
-		status VARCHAR(50) NOT NULL,
-		from_time TIMESTAMPTZ NOT NULL,
-		to_time TIMESTAMPTZ NOT NULL,
+		business_date DATE NOT NULL DEFAULT CURRENT_DATE,
+		status VARCHAR(20) NOT NULL DEFAULT 'COMPLETED',
+		total_checked INT NOT NULL DEFAULT 0,
 		matched_count INT NOT NULL DEFAULT 0,
 		discrepancy_count INT NOT NULL DEFAULT 0,
-		total_amount_reconciled BIGINT NOT NULL DEFAULT 0,
+		started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		completed_at TIMESTAMPTZ,
+		error_message TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS bank_accounts (
+		account_id UUID PRIMARY KEY,
+		account_number VARCHAR(50) NOT NULL UNIQUE,
+		iban VARCHAR(34) NOT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 
-	CREATE TABLE IF NOT EXISTS discrepancy_exceptions (
+	CREATE TABLE IF NOT EXISTS exceptions (
 		id UUID PRIMARY KEY,
-		job_id UUID REFERENCES reconciliation_jobs(id),
-		transaction_reference VARCHAR(100) NOT NULL,
-		type VARCHAR(50) NOT NULL,
-		status VARCHAR(50) NOT NULL,
-		ledger_amount BIGINT NOT NULL,
-		gateway_amount BIGINT NOT NULL,
+		job_id UUID REFERENCES reconciliation_jobs(id) ON DELETE SET NULL,
+		account_id UUID NOT NULL,
+		reference_id UUID NOT NULL,
+		entry_id UUID,
+		discrepancy_type VARCHAR(40) NOT NULL CHECK (discrepancy_type IN ('AMOUNT_MISMATCH', 'MISSING_IN_LEDGER', 'MISSING_IN_SETTLEMENT', 'STATUS_CONFLICT')),
+		expected_amount BIGINT NOT NULL,
+		actual_amount BIGINT NOT NULL,
 		difference_amount BIGINT NOT NULL,
-		description TEXT NOT NULL,
+		currency CHAR(3) NOT NULL DEFAULT 'IRR',
+		status VARCHAR(20) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'UNDER_REVIEW', 'RESOLVED', 'DISMISSED')),
 		resolution_notes TEXT,
-		resolved_by VARCHAR(100),
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_exceptions_account_id ON exceptions(account_id);
+	CREATE INDEX IF NOT EXISTS idx_exceptions_status_created ON exceptions(status, created_at DESC);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("exec schema: %w", err)
 	}
 
-	// Check if seed data exists
+	// Seed known accounts if not present
+	_, _ = s.db.Exec(`
+		INSERT INTO bank_accounts (account_id, account_number, iban, created_at)
+		VALUES 
+			('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'AC-1001-2026', 'IR120120000000000000000001', NOW() - INTERVAL '30 days'),
+			('b1ffcd00-0d1c-4fe9-cc7e-7cc0ce491b22', 'AC-1002-2026', 'IR120120000000000000000002', NOW() - INTERVAL '30 days')
+		ON CONFLICT (account_id) DO NOTHING;
+	`)
+
+	// Check if seed jobs exist
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM reconciliation_jobs`).Scan(&count); err == nil && count == 0 {
 		jobID := "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
 		_, err = s.db.Exec(`
-			INSERT INTO reconciliation_jobs (id, status, from_time, to_time, matched_count, discrepancy_count, total_amount_reconciled, created_at)
-			VALUES ($1, 'COMPLETED', NOW() - INTERVAL '1 day', NOW(), 1420, 2, 45000000000, NOW());
+			INSERT INTO reconciliation_jobs (id, business_date, status, total_checked, matched_count, discrepancy_count, started_at, completed_at)
+			VALUES ($1, '2026-10-31', 'COMPLETED', 1422, 1420, 2, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour');
 		`, jobID)
 		if err == nil {
 			_, _ = s.db.Exec(`
-				INSERT INTO discrepancy_exceptions 
-				(id, job_id, transaction_reference, type, status, ledger_amount, gateway_amount, difference_amount, description, created_at)
+				INSERT INTO exceptions 
+				(id, job_id, account_id, reference_id, entry_id, discrepancy_type, expected_amount, actual_amount, difference_amount, currency, status, resolution_notes, created_at, updated_at)
 				VALUES
-				($1, $2, 'TX-20261025-001', 'AMOUNT_MISMATCH', 'OPEN', 25000000, 24500000, 500000, 'Difference in settlement fee calculation between S2 ledger and S5 gateway', NOW() - INTERVAL '2 hours'),
-				($3, $2, 'TX-20261025-002', 'MISSING_IN_GATEWAY', 'UNDER_REVIEW', 10000000, 0, 10000000, 'Internal transfer captured in S2 but missing in external clearing file', NOW() - INTERVAL '1 hour');
-			`, uuid.NewString(), jobID, uuid.NewString())
+				('e1111111-1111-1111-1111-111111111111', $1, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'f1111111-1111-1111-1111-111111111111', '0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11', 'AMOUNT_MISMATCH', 25000000, 24500000, 500000, 'IRR', 'OPEN', 'Settlement fee calculation discrepancy between S2 ledger (25,000,000 IRR) and S5 gateway settlement report (24,500,000 IRR)', NOW() - INTERVAL '90 minutes', NOW() - INTERVAL '90 minutes'),
+				('e2222222-2222-2222-2222-222222222222', $1, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'f2222222-2222-2222-2222-222222222222', '0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c22', 'MISSING_IN_SETTLEMENT', 10000000, 0, 10000000, 'IRR', 'UNDER_REVIEW', 'Transfer recorded in S2 ledger but missing in external S5 clearing report', NOW() - INTERVAL '60 minutes', NOW() - INTERVAL '60 minutes')
+				ON CONFLICT (id) DO NOTHING;
+			`, jobID)
 		}
 	}
 
 	return nil
+}
+
+// GetAccountExceptionsHandler godoc
+// @Summary      Get exceptions by account ID (Consumer Loop Endpoint)
+// @Description  Enables Team 1 (Account - Consumer) to query discrepancy exceptions for a specific bank account.
+// @Tags         Reconciliation Exceptions
+// @Produce      json
+// @Param        id   path      string  true  "Target account UUID"
+// @Success      200  {array}   AccountExceptionItem
+// @Failure      400  {object}  ProblemDetails
+// @Failure      404  {object}  ProblemDetails
+// @Failure      500  {object}  ProblemDetails
+// @Router       /api/v1/accounts/{id}/exceptions [get]
+func (s *Server) GetAccountExceptionsHandler(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		p := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
+		idStr = strings.TrimSuffix(p, "/exceptions")
+	}
+
+	accountUUID, err := uuid.Parse(idStr)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Validation Error",
+			fmt.Sprintf("Invalid account UUID format: %q", idStr))
+		return
+	}
+
+	// Verify account exists in bank records or exceptions table
+	var accountExists bool
+	err = s.db.QueryRowContext(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM bank_accounts WHERE account_id = $1) 
+		 OR EXISTS(SELECT 1 FROM exceptions WHERE account_id = $1)`,
+		accountUUID).Scan(&accountExists)
+	if err != nil {
+		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", err.Error())
+		return
+	}
+
+	if !accountExists {
+		writeProblem(w, r, http.StatusNotFound, "NOT_FOUND", "Account Not Found",
+			fmt.Sprintf("Account %s was not found in bank records", accountUUID.String()))
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT id, reference_id, discrepancy_type, expected_amount, actual_amount, difference_amount, currency, status, created_at
+		FROM exceptions
+		WHERE account_id = $1
+		ORDER BY created_at DESC
+	`, accountUUID)
+	if err != nil {
+		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	items := make([]AccountExceptionItem, 0)
+	for rows.Next() {
+		var item AccountExceptionItem
+		var diffAmt int64
+		if err := rows.Scan(
+			&item.ID,
+			&item.ReferenceID,
+			&item.DiscrepancyType,
+			&item.ExpectedAmount,
+			&item.ActualAmount,
+			&diffAmt,
+			&item.Currency,
+			&item.Status,
+			&item.CreatedAt,
+		); err != nil {
+			writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Scan Error", err.Error())
+			return
+		}
+		item.Difference = diffAmt
+		items = append(items, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(items)
+}
+
+// handleGetAccountExceptions is kept for backwards compatibility with tests.
+func (s *Server) handleGetAccountExceptions(w http.ResponseWriter, r *http.Request) {
+	s.GetAccountExceptionsHandler(w, r)
 }
 
 // HealthCheckHandler godoc
@@ -489,7 +617,8 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 	items := make([]Discrepancy, 0, limit)
 	for rows.Next() {
 		var d Discrepancy
-		var ledgerAmt, gatewayAmt, diffAmt int64
+		var expectedAmt, actualAmt, diffAmt int64
+		var notes string
 		if err := rows.Scan(&d.ID, &d.JobID, &d.TransactionReference, &d.Type, &d.Status,
 			&ledgerAmt, &gatewayAmt, &diffAmt, &d.Description,
 			&d.ResolutionNotes, &d.ResolvedBy, &d.CreatedAt); err != nil {
@@ -497,9 +626,13 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", "failed to read exceptions")
 			return
 		}
-		d.LedgerAmount = Money{Amount: ledgerAmt, Currency: "IRR"}
-		d.GatewayAmount = Money{Amount: gatewayAmt, Currency: "IRR"}
+		d.LedgerAmount = Money{Amount: expectedAmt, Currency: "IRR"}
+		d.GatewayAmount = Money{Amount: actualAmt, Currency: "IRR"}
 		d.DifferenceAmount = Money{Amount: diffAmt, Currency: "IRR"}
+		d.Description = notes
+		if notes != "" {
+			d.ResolutionNotes = &notes
+		}
 		items = append(items, d)
 	}
 	if err := rows.Err(); err != nil {
@@ -532,10 +665,11 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) TriggerJobHandler(w http.ResponseWriter, r *http.Request) {
 	jobID := uuid.NewString()
 	now := time.Now().UTC()
+	today := now.Format("2006-01-02")
 	_, err := s.db.Exec(`
-		INSERT INTO reconciliation_jobs (id, status, from_time, to_time, matched_count, discrepancy_count, total_amount_reconciled, created_at)
-		VALUES ($1, 'COMPLETED', $2, $3, 350, 0, 12500000000, $4)
-	`, jobID, now.Add(-24*time.Hour), now, now)
+		INSERT INTO reconciliation_jobs (id, business_date, status, total_checked, matched_count, discrepancy_count, started_at, completed_at)
+		VALUES ($1, $2, 'COMPLETED', 350, 350, 0, $3, $4)
+	`, jobID, today, now.Add(-10*time.Minute), now)
 
 	if err != nil {
 		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to start reconciliation", err.Error())
@@ -569,7 +703,11 @@ func main() {
 	}
 	defer db.Close()
 
-	srv := &Server{cfg: cfg, db: db}
+	s2Client := NewS2Client(S2ClientConfig{
+		BaseURL: cfg.S2BaseURL,
+		Timeout: 5 * time.Second,
+	})
+	srv := &Server{cfg: cfg, db: db, s2Client: s2Client}
 
 	// Try verifying DB connection
 	if err := db.Ping(); err != nil {
@@ -592,12 +730,16 @@ func main() {
 	mux.HandleFunc("GET /ready", srv.ReadinessCheckHandler)
 
 	// 3. GET /api/v1/exceptions (List discrepancies with pagination - GEN-09)
+	// 3. GET /api/v1/exceptions (List discrepancies with pagination - GEN-09)
 	mux.HandleFunc("GET /api/v1/exceptions", srv.ListExceptionsHandler)
 
-	// 4. POST /api/v1/reconciliations/jobs (Trigger reconciliation run)
+	// 4. GET /api/v1/accounts/{id}/exceptions (Loop endpoint for Team 1 Consumer - KAN-12)
+	mux.HandleFunc("GET /api/v1/accounts/{id}/exceptions", srv.GetAccountExceptionsHandler)
+
+	// 5. POST /api/v1/reconciliations/jobs (Trigger reconciliation run)
 	mux.HandleFunc("POST /api/v1/reconciliations/jobs", srv.TriggerJobHandler)
 
-	// 5. Serve OpenAPI & Swagger files
+	// 6. Serve OpenAPI & Swagger files
 	mux.HandleFunc("GET /docs/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 		http.ServeFile(w, r, "openapi/reconciliation.yaml")

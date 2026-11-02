@@ -30,6 +30,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /ready:
     get:
@@ -85,6 +91,280 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '409':
           description: Conflict or reused idempotency key with different payload
+        '503':
+          description: Service dependency unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/accounts/{id}/exceptions:
+    get:
+      summary: Get discrepancies and exceptions for an account
+      description: >
+        Returns all recorded financial discrepancies and exceptions associated with a specific bank account.
+        This is the mandatory loop endpoint consumed by Service 1 (Customer & Account Management - S1-ACC).
+      operationId: getAccountExceptions
+      tags:
+        - Loop Endpoint (S1 Consumer)
+        - Exceptions
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - name: id
+          in: path
+          required: true
+          description: Bank account UUID from Service 1 (S1-ACC)
+          schema:
+            type: string
+            format: uuid
+            example: "0192a7d1-0001-7000-8000-00000000a001"
+        - name: status
+          in: query
+          required: false
+          description: Optional filter by exception status
+          schema:
+            type: string
+            enum: [OPEN, UNDER_REVIEW, RESOLVED, DISMISSED]
+            example: "OPEN"
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of records to return (maximum 200)
+          schema:
+            type: integer
+            default: 20
+            maximum: 200
+            minimum: 1
+            example: 20
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor (GEN-09)
+          schema:
+            type: string
+            example: "eyJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yNFQxMjoyMDowMFoiLCJpZCI6IjAxOTJhN2U0LTZiMWQtN2MzZS05YTQxLTJmNWQ4ZTBiN2MxMSJ9"
+      responses:
+        '200':
+          description: List of exceptions recorded for the account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExceptionListResponse'
+        '400':
+          description: Invalid account UUID format or invalid query parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found or has no recorded record
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/exceptions:
+    get:
+      summary: List all discrepancies and exceptions
+      description: >
+        Returns a paginated list of exceptions/discrepancies discovered during reconciliation
+        (GEN-09 cursor pagination). Used by back-office auditors and administrators.
+      operationId: listExceptions
+      tags:
+        - Exceptions
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - name: status
+          in: query
+          required: false
+          description: Filter by exception status
+          schema:
+            type: string
+            enum: [OPEN, UNDER_REVIEW, RESOLVED, DISMISSED]
+            example: "OPEN"
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of records to return (maximum 200)
+          schema:
+            type: integer
+            default: 20
+            maximum: 200
+            minimum: 1
+            example: 20
+        - name: cursor
+          in: query
+          required: false
+          description: Cursor for pagination (ID/timestamp of last seen record)
+          schema:
+            type: string
+            example: "eyJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yNFQxMjoyMDowMFoiLCJpZCI6IjAxOTJhN2U0LTZiMWQtN2MzZS05YTQxLTJmNWQ4ZTBiN2MxMSJ9"
+      responses:
+        '200':
+          description: List of reconciliation exceptions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExceptionListResponse'
+        '400':
+          description: Invalid filter or cursor parameter
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/exceptions/{id}:
+    get:
+      summary: Get exception details
+      description: Retrieves full details of a specific financial discrepancy.
+      operationId: getException
+      tags:
+        - Exceptions
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - name: id
+          in: path
+          required: true
+          description: Exception UUID
+          schema:
+            type: string
+            format: uuid
+            example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+      responses:
+        '200':
+          description: Exception details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscrepancyException'
+        '400':
+          description: Invalid exception UUID format
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Exception not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/exceptions/{id}/resolve:
+    patch:
+      summary: Propose or apply resolution to an exception
+      description: >
+        Submits human-approved resolution action (e.g. manual ledger adjustment,
+        contacting settlement partner, or closing as timing difference).
+      operationId: resolveException
+      tags:
+        - Exceptions
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: id
+          in: path
+          required: true
+          description: Exception UUID to resolve
+          schema:
+            type: string
+            format: uuid
+            example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveExceptionRequest'
+      responses:
+        '200':
+          description: Exception resolution updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscrepancyException'
+        '400':
+          description: Validation error or invalid payload
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Exception not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict, exception already resolved, or reused idempotency key
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/reconciliations/jobs:
+    post:
+      summary: Trigger reconciliation job
+      description: >
+        Executes an automated reconciliation job comparing internal ledger entries (S2)
+        against external settlement clearing logs (S5) for a specified date/time window.
+      operationId: createReconciliationJob
+      tags:
+        - Reconciliation
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReconciliationRequest'
+      responses:
+        '201':
+          description: Reconciliation job created and started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationJob'
+        '400':
+          description: Validation error or invalid date window
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict or reused idempotency key with different payload
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal server error
           content:
             application/problem+json:
               schema:
@@ -114,123 +394,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReconciliationJob'
+        '400':
+          description: Invalid job UUID format
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Job not found
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
-
-  /api/v1/exceptions:
-    get:
-      summary: List discrepancies and exceptions
-      description: >
-        Returns a paginated list of exceptions/discrepancies discovered during reconciliation,
-        oldest first (created_at, id). GEN-09 cursor pagination.
-      operationId: listExceptions
-      tags:
-        - Exceptions
-      parameters:
-        - $ref: '#/components/parameters/XCorrelationID'
-        - name: status
-          in: query
-          required: false
-          description: Filter by exception status (OPEN, UNDER_REVIEW, RESOLVED, DISMISSED)
-          schema:
-            type: string
-            enum: [OPEN, UNDER_REVIEW, RESOLVED, DISMISSED]
-        - name: limit
-          in: query
-          required: false
-          description: Maximum number of records to return (default 50). Values above 200 are rejected with 400.
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 200
-        - name: cursor
-          in: query
-          required: false
-          description: Opaque cursor (base64url of created_at and id). Use next_cursor of the previous page.
-          schema:
-            type: string
-      responses:
-        '200':
-          description: List of reconciliation exceptions
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExceptionListResponse'
-        '400':
-          description: limit above 200 or not a positive integer, unknown status, or invalid cursor
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-
-  /api/v1/exceptions/{id}:
-    get:
-      summary: Get exception details
-      description: Retrieves full details of a specific financial discrepancy.
-      operationId: getException
-      tags:
-        - Exceptions
-      parameters:
-        - $ref: '#/components/parameters/XCorrelationID'
-        - name: id
-          in: path
-          required: true
-          description: Exception UUID
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Exception details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DiscrepancyException'
-        '404':
-          description: Exception not found
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-
-  /api/v1/exceptions/{id}/resolve:
-    patch:
-      summary: Propose or apply resolution to an exception
-      description: >
-        Submits human-approved resolution action (e.g. manual ledger adjustment,
-        contacting settlement partner, or closing as timing difference).
-      operationId: resolveException
-      tags:
-        - Exceptions
-      parameters:
-        - $ref: '#/components/parameters/XCorrelationID'
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResolveExceptionRequest'
-      responses:
-        '200':
-          description: Exception resolution updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DiscrepancyException'
-        '404':
-          description: Exception not found
+        '500':
+          description: Internal server error
           content:
             application/problem+json:
               schema:
@@ -320,6 +497,7 @@ components:
           type: string
           enum: [ALL, SATNA, PAYA, INTERNAL]
           default: ALL
+          example: "ALL"
 
     ReconciliationJob:
       type: object
@@ -344,9 +522,11 @@ components:
         from_time:
           type: string
           format: date-time
+          example: "2026-10-24T00:00:00Z"
         to_time:
           type: string
           format: date-time
+          example: "2026-10-24T23:59:59Z"
         matched_count:
           type: integer
           example: 1420
@@ -358,15 +538,18 @@ components:
         created_at:
           type: string
           format: date-time
+          example: "2026-10-25T01:00:00Z"
         completed_at:
           type: string
           format: date-time
           nullable: true
+          example: "2026-10-25T01:05:30Z"
 
     DiscrepancyException:
       type: object
       required:
         - id
+        - account_id
         - type
         - status
         - difference_amount
@@ -380,6 +563,13 @@ components:
         job_id:
           type: string
           format: uuid
+          nullable: true
+          example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+        account_id:
+          type: string
+          format: uuid
+          description: Bank account UUID associated with this discrepancy (consumed by S1)
+          example: "0192a7d1-0001-7000-8000-00000000a001"
         transaction_reference:
           type: string
           example: "TX-20261025-998811"
@@ -403,12 +593,15 @@ components:
         resolution_notes:
           type: string
           nullable: true
+          example: "Under investigation by backoffice team."
         resolved_by:
           type: string
           nullable: true
+          example: "auditor_reza"
         created_at:
           type: string
           format: date-time
+          example: "2026-10-25T01:05:00Z"
 
     ExceptionListResponse:
       type: object
@@ -423,7 +616,7 @@ components:
           type: string
           nullable: true
           description: Cursor token for the next page (GEN-09)
-          example: "eyJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yNVQxNDo1MTozMC4xMjM0NTZaIiwiaWQiOiIwMTkyYTdlNC02YjFkLTdjM2UtOWE0MS0yZjVkOGUwYjdjMTEifQ"
+          example: "eyJjcmVhdGVkX2F0IjoiMjAyNi0xMC0yNFQxMjoyMDowMFoiLCJpZCI6IjAxOTJhN2U0LTZiMWQtN2MzZS05YTQxLTJmNWQ4ZTBiN2MxMSJ9"
 
     ResolveExceptionRequest:
       type: object
@@ -434,7 +627,7 @@ components:
       properties:
         action:
           type: string
-          enum: [RESOLVED, REJECTED, ADJUSTED]
+          enum: [RESOLVED, DISMISSED, ADJUSTED]
           example: "RESOLVED"
         notes:
           type: string
