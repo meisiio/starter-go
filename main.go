@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -141,7 +143,7 @@ type ProblemDetails struct {
 func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
 	cid, _ := r.Context().Value(correlationKey).(string)
 	p := ProblemDetails{
-		Type:          fmt.Sprintf("https://errors.labbank.example/%s", strings.ToLower(code)),
+		Type:          fmt.Sprintf("https://errors.labbank.example/%s", strings.ReplaceAll(strings.ToLower(code), "_", "-")),
 		Title:         title,
 		Status:        status,
 		Code:          code,
@@ -151,6 +153,12 @@ func writeProblem(w http.ResponseWriter, r *http.Request, status int, code, titl
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(p)
+}
+
+// correlationID returns the X-Correlation-ID stored in the request context by correlationMiddleware.
+func correlationID(r *http.Request) string {
+	cid, _ := r.Context().Value(correlationKey).(string)
+	return cid
 }
 
 // Structured JSON log entry (GEN-11).
@@ -478,37 +486,145 @@ func (s *Server) ReadinessCheckHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// Pagination limits for GET /api/v1/exceptions (GEN-09).
+const (
+	defaultExceptionsLimit = 50
+	maxExceptionsLimit     = 200
+)
+
+// Allowed values of the ?status= filter.
+var validExceptionStatuses = map[string]bool{
+	"OPEN":         true,
+	"UNDER_REVIEW": true,
+	"RESOLVED":     true,
+	"DISMISSED":    true,
+}
+
+// exceptionCursor is the position after the last item of a page (keyset pagination).
+type exceptionCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+}
+
+// encode returns an opaque URL-safe token: base64url of {"created_at": ..., "id": ...}.
+func (c exceptionCursor) encode() string {
+	raw, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeExceptionCursor(token string) (exceptionCursor, error) {
+	var c exceptionCursor
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return c, fmt.Errorf("not valid base64url")
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return c, fmt.Errorf("not valid JSON")
+	}
+	if c.CreatedAt.IsZero() {
+		return c, fmt.Errorf("created_at is missing")
+	}
+	if _, err := uuid.Parse(c.ID); err != nil {
+		return c, fmt.Errorf("id is not a UUID")
+	}
+	return c, nil
+}
+
 // ListExceptionsHandler godoc
 // @Summary      List discrepancies and exceptions
-// @Description  Retrieve a paginated list of financial discrepancies identified by reconciliation jobs.
+// @Description  Paginated list of financial discrepancies, oldest first (created_at, id). Cursor pagination (GEN-09).
 // @Tags         Reconciliation Exceptions
 // @Produce      json
+// @Param        status  query  string  false  "OPEN | UNDER_REVIEW | RESOLVED | DISMISSED"
+// @Param        limit   query  int     false  "1..200, default 50; above 200 returns 400"
+// @Param        cursor  query  string  false  "next_cursor of the previous page"
 // @Success      200  {object}  ExceptionsResponse
+// @Failure      400  {object}  ProblemDetails
 // @Failure      500  {object}  ProblemDetails
 // @Router       /api/v1/exceptions [get]
 func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(`
-		SELECT id, COALESCE(job_id::text, ''), reference_id::text, discrepancy_type, status, 
-		       expected_amount, actual_amount, difference_amount, COALESCE(resolution_notes, ''), 
-		       created_at 
-		FROM exceptions 
-		ORDER BY created_at DESC 
-		LIMIT 50
-	`)
+	q := r.URL.Query()
+
+	// ---- 1. validate the query string ----
+	limit := defaultExceptionsLimit
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeProblem(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid limit",
+				"limit must be a positive integer")
+			return
+		}
+		if n > maxExceptionsLimit {
+			writeProblem(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid limit",
+				fmt.Sprintf("limit must not exceed %d", maxExceptionsLimit))
+			return
+		}
+		limit = n
+	}
+
+	status := q.Get("status")
+	if status != "" && !validExceptionStatuses[status] {
+		writeProblem(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid status",
+			"status must be one of OPEN, UNDER_REVIEW, RESOLVED, DISMISSED")
+		return
+	}
+
+	var cursor *exceptionCursor
+	if v := q.Get("cursor"); v != "" {
+		c, err := decodeExceptionCursor(v)
+		if err != nil {
+			writeProblem(w, r, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid cursor",
+				"cursor is not a valid token: "+err.Error())
+			return
+		}
+		cursor = &c
+	}
+
+	// ---- 2. build the query with dynamic WHERE clauses ----
+	var (
+		conds []string
+		args  []any
+	)
+	if status != "" {
+		args = append(args, status)
+		conds = append(conds, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if cursor != nil {
+		// keyset pagination: everything after the last row of the previous page
+		args = append(args, cursor.CreatedAt, cursor.ID)
+		conds = append(conds, fmt.Sprintf("(created_at, id) > ($%d::timestamptz, $%d::uuid)", len(args)-1, len(args)))
+	}
+
+	query := `
+		SELECT id, COALESCE(job_id::text, ''), transaction_reference, type, status,
+		       ledger_amount, gateway_amount, difference_amount, description,
+		       resolution_notes, resolved_by, created_at
+		FROM discrepancy_exceptions`
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	args = append(args, limit+1) // one extra row tells us whether a next page exists
+	query += fmt.Sprintf(" ORDER BY created_at ASC, id ASC LIMIT $%d", len(args))
+
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
-		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", err.Error())
+		logJSON("ERROR", s.cfg.ServiceName, correlationID(r), "list exceptions query failed", map[string]any{"error": err.Error()})
+		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", "failed to query exceptions")
 		return
 	}
 	defer rows.Close()
 
-	items := make([]Discrepancy, 0)
+	items := make([]Discrepancy, 0, limit)
 	for rows.Next() {
 		var d Discrepancy
 		var expectedAmt, actualAmt, diffAmt int64
 		var notes string
 		if err := rows.Scan(&d.ID, &d.JobID, &d.TransactionReference, &d.Type, &d.Status,
-			&expectedAmt, &actualAmt, &diffAmt, &notes, &d.CreatedAt); err != nil {
-			continue
+			&ledgerAmt, &gatewayAmt, &diffAmt, &d.Description,
+			&d.ResolutionNotes, &d.ResolvedBy, &d.CreatedAt); err != nil {
+			logJSON("ERROR", s.cfg.ServiceName, correlationID(r), "list exceptions scan failed", map[string]any{"error": err.Error()})
+			writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", "failed to read exceptions")
+			return
 		}
 		d.LedgerAmount = Money{Amount: expectedAmt, Currency: "IRR"}
 		d.GatewayAmount = Money{Amount: actualAmt, Currency: "IRR"}
@@ -519,12 +635,23 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, d)
 	}
+	if err := rows.Err(); err != nil {
+		logJSON("ERROR", s.cfg.ServiceName, correlationID(r), "list exceptions iteration failed", map[string]any{"error": err.Error()})
+		writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", "failed to read exceptions")
+		return
+	}
+
+	// ---- 3. build next_cursor ----
+	var next *string
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[limit-1]
+		token := exceptionCursor{CreatedAt: last.CreatedAt, ID: last.ID}.encode()
+		next = &token
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(ExceptionsResponse{
-		Items:       items,
-		NextCursor: nil,
-	})
+	_ = json.NewEncoder(w).Encode(ExceptionsResponse{Items: items, NextCursor: next})
 }
 
 // TriggerJobHandler godoc
@@ -615,11 +742,7 @@ func main() {
 	// 6. Serve OpenAPI & Swagger files
 	mux.HandleFunc("GET /docs/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-		http.ServeFile(w, r, "docs/openapi.yaml")
-	})
-	mux.HandleFunc("GET /docs/openapi.json", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		http.ServeFile(w, r, "docs/openapi.json")
+		http.ServeFile(w, r, "openapi/reconciliation.yaml")
 	})
 	mux.HandleFunc("GET /docs/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
@@ -654,7 +777,7 @@ func main() {
         url: "/docs/swagger.json",
         urls: [
           { url: "/docs/swagger.json", name: "Swagger 2.0 (Swag Generated)" },
-          { url: "/docs/openapi.json", name: "OpenAPI 3.0 (Contract-First)" }
+          { url: "/docs/openapi.yaml", name: "OpenAPI 3.0 (Contract-First)" }
         ],
         dom_id: '#swagger-ui',
         deepLinking: true,

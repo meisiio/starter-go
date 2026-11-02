@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import './App.css';
+import { api } from './api/client';
 
 interface HealthData {
   status: string;
@@ -33,8 +34,6 @@ interface ExceptionItem {
   created_at: string;
 }
 
-const BACKEND_BASE = 'http://localhost:8086';
-
 export default function App() {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [healthLoading, setHealthLoading] = useState<boolean>(false);
@@ -55,16 +54,13 @@ export default function App() {
     setHealthError(null);
     const start = performance.now();
     try {
-      const res = await fetch(`${BACKEND_BASE}/health`, {
-        headers: { 'Accept': 'application/json' }
-      });
+      const { data, response } = await api.GET('/health');
       const latency = Math.round(performance.now() - start);
       setHealthLatency(latency);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      if (!response.ok || !data) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      const data: HealthData = await res.json();
-      setHealth(data);
+      setHealth(data as HealthData);
     } catch (err: any) {
       setHealthError(err.message || 'Failed to fetch /health');
     } finally {
@@ -77,14 +73,11 @@ export default function App() {
     setReadyLoading(true);
     setReadyError(null);
     try {
-      const res = await fetch(`${BACKEND_BASE}/ready`, {
-        headers: { 'Accept': 'application/json' }
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const { data, response } = await api.GET('/ready');
+      if (!response.ok || !data) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      const data: ReadyData = await res.json();
-      setReady(data);
+      setReady(data as ReadyData);
     } catch (err: any) {
       setReadyError(err.message || 'Failed to fetch /ready');
     } finally {
@@ -96,11 +89,10 @@ export default function App() {
   const fetchExceptions = async () => {
     setLoadingExceptions(true);
     try {
-      const res = await fetch(`${BACKEND_BASE}/api/v1/exceptions`);
-      if (res.ok) {
-        const data = await res.json();
-        setExceptions(data.items || []);
-      }
+      const { data } = await api.GET('/api/v1/exceptions', {
+        params: { query: { limit: 50 } },
+      });
+      setExceptions((data?.items ?? []) as ExceptionItem[]);
     } catch (err) {
       console.error('Failed to load exceptions', err);
     } finally {
@@ -112,19 +104,15 @@ export default function App() {
   const handleRunReconciliation = async () => {
     setReconciling(true);
     try {
-      const res = await fetch(`${BACKEND_BASE}/api/v1/reconciliations/jobs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': crypto.randomUUID(),
-        },
-        body: JSON.stringify({
+      const { response } = await api.POST('/api/v1/reconciliations/jobs', {
+        params: { header: { 'Idempotency-Key': crypto.randomUUID() } },
+        body: {
           from_time: new Date(Date.now() - 86400000).toISOString(),
           to_time: new Date().toISOString(),
           scope: 'ALL',
-        }),
+        },
       });
-      if (res.ok) {
+      if (response.ok) {
         await fetchExceptions();
       }
     } catch (err) {

@@ -51,12 +51,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ReadyResponse'
-        '400':
-          description: Bad request
+        '503':
+          description: Service dependency unavailable
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/reconciliations/jobs:
+    post:
+      summary: Trigger reconciliation job
+      description: >
+        Executes an automated reconciliation job comparing internal ledger entries (S2)
+        against external settlement clearing logs (S5) for a specified date/time window.
+      operationId: createReconciliationJob
+      tags:
+        - Reconciliation
+      parameters:
+        - $ref: '#/components/parameters/XCorrelationID'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReconciliationRequest'
+      responses:
+        '201':
+          description: Reconciliation job created and started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationJob'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Conflict or reused idempotency key with different payload
         '503':
           description: Service dependency unavailable
           content:
