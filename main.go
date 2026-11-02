@@ -20,8 +20,8 @@ import (
 // @title           LabBank - S6-RCN Reconciliation & Exceptions Service API
 // @version         1.0.0
 // @description     Official OpenAPI Specification for LabBank Reconciliation & Exceptions Service (S6-RCN).
-// @contact.name    S6-RCN Engineering Team
-// @contact.email   rcn-team@labbank.example
+// @contact.name    reza.shalchian
+// @contact.email   rezammh823@gmail.com
 // @host            localhost:8086
 // @BasePath        /
 
@@ -617,8 +617,7 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 	items := make([]Discrepancy, 0, limit)
 	for rows.Next() {
 		var d Discrepancy
-		var expectedAmt, actualAmt, diffAmt int64
-		var notes string
+		var ledgerAmt, gatewayAmt, diffAmt int64
 		if err := rows.Scan(&d.ID, &d.JobID, &d.TransactionReference, &d.Type, &d.Status,
 			&ledgerAmt, &gatewayAmt, &diffAmt, &d.Description,
 			&d.ResolutionNotes, &d.ResolvedBy, &d.CreatedAt); err != nil {
@@ -626,13 +625,9 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "Database Error", "failed to read exceptions")
 			return
 		}
-		d.LedgerAmount = Money{Amount: expectedAmt, Currency: "IRR"}
-		d.GatewayAmount = Money{Amount: actualAmt, Currency: "IRR"}
+		d.LedgerAmount = Money{Amount: ledgerAmt, Currency: "IRR"}
+		d.GatewayAmount = Money{Amount: gatewayAmt, Currency: "IRR"}
 		d.DifferenceAmount = Money{Amount: diffAmt, Currency: "IRR"}
-		d.Description = notes
-		if notes != "" {
-			d.ResolutionNotes = &notes
-		}
 		items = append(items, d)
 	}
 	if err := rows.Err(); err != nil {

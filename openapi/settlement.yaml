@@ -1,0 +1,185 @@
+openapi: 3.0.3
+info:
+  title: LabBank - S5-STL Clearing & Settlement Gateway Service API
+  description: >
+    Official OpenAPI Specification for LabBank Clearing & Settlement Gateway Service (S5-STL).
+    Provides inter-bank settlement reports consumed by Service 6 (Reconciliation & Exceptions).
+  version: 1.0.0
+  contact:
+    name: S5-STL Engineering Team
+    email: stl-team@labbank.example
+
+servers:
+  - url: http://localhost:8085
+    description: Local development environment
+
+paths:
+  /api/v1/settlement-reports:
+    get:
+      summary: Get daily settlement report
+      description: >
+        Returns the aggregated inter-bank settlement transactions and summary for a given business date.
+        Consumed by Service 6 (Reconciliation & Exceptions - S6-RCN) to audit against internal ledger entries.
+      operationId: getSettlementReport
+      tags:
+        - Settlement Reports
+      parameters:
+        - name: X-Correlation-ID
+          in: header
+          required: false
+          description: Distributed tracing correlation identifier (GEN-08)
+          schema:
+            type: string
+            example: "0192a7e5-3b0d-7c55-9a51-0c7e2b1d8f40"
+        - name: date
+          in: query
+          required: true
+          description: Target settlement business date (YYYY-MM-DD in Asia/Tehran)
+          schema:
+            type: string
+            format: date
+            example: "2026-11-02"
+      responses:
+        '200':
+          description: Daily settlement report found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementReportResponse'
+        '400':
+          description: Invalid date format
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: No settlement report generated for the specified date
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Settlement gateway service unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  schemas:
+    SettlementReportResponse:
+      type: object
+      required:
+        - report_id
+        - business_date
+        - total_records
+        - total_amount
+        - transactions
+        - generated_at
+      properties:
+        report_id:
+          type: string
+          format: uuid
+          example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+        business_date:
+          type: string
+          format: date
+          example: "2026-11-02"
+        total_records:
+          type: integer
+          example: 350
+        total_amount:
+          $ref: '#/components/schemas/Money'
+        generated_at:
+          type: string
+          format: date-time
+          example: "2026-11-02T23:50:00Z"
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SettlementTransactionItem'
+
+    SettlementTransactionItem:
+      type: object
+      required:
+        - transaction_reference
+        - amount
+        - source_bank
+        - destination_bank
+        - status
+        - settled_at
+      properties:
+        transaction_reference:
+          type: string
+          example: "TX-STL-20261102-00123"
+        transfer_id:
+          type: string
+          format: uuid
+          example: "0192a7e4-6b1d-7c3e-9a41-2f5d8e0b7c11"
+        account_id:
+          type: string
+          format: uuid
+          example: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+        amount:
+          $ref: '#/components/schemas/Money'
+        source_bank:
+          type: string
+          example: "099"
+        destination_bank:
+          type: string
+          example: "012"
+        channel:
+          type: string
+          enum: [PAYA, SATNA, CARD_TO_CARD]
+          example: "PAYA"
+        status:
+          type: string
+          enum: [SETTLED, REJECTED, RETURNED]
+          example: "SETTLED"
+        settled_at:
+          type: string
+          format: date-time
+          example: "2026-11-02T14:30:00Z"
+
+    Money:
+      type: object
+      required:
+        - amount
+        - currency
+      properties:
+        amount:
+          type: integer
+          format: int64
+          example: 25000000
+        currency:
+          type: string
+          example: "IRR"
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri
+          example: "https://errors.labbank.example/not-found"
+        title:
+          type: string
+          example: "Resource not found"
+        status:
+          type: integer
+          example: 404
+        code:
+          type: string
+          example: "NOT_FOUND"
+        detail:
+          type: string
+          example: "Settlement report for date 2026-11-02 not found"
+        correlation_id:
+          type: string
+          example: "0192a7e5-3b0d-7c55-9a51-0c7e2b1d8f40"
+
