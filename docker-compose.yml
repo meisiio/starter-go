@@ -11,7 +11,35 @@ services:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - labbank_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin} -d ${DB_NAME:-labbank_reconciliation}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S6-RCN itself: `docker compose up --build` starts the service, PostgreSQL and seeds the data.
+  rcn:
+    build: .
+    container_name: labbank-s6-rcn
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: S6-RCN
+      LISTEN_ADDR: 0.0.0.0:8086        # reachable from other machines (neighbour team / bonus part)
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-admin}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      DB_NAME: ${DB_NAME:-labbank_reconciliation}
+      DB_SSLMODE: disable
+      S2_LEDGER_BASE_URL: ${S2_LEDGER_BASE_URL:-http://host.docker.internal:8082}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8086:8086"
 
 volumes:
+  # No longer "external": a fresh clone can run `docker compose up --build` without a manual `docker volume create`.
   labbank_pgdata:
-    external: true
