@@ -26,10 +26,14 @@ type S2ClientConfig struct {
 
 // LoadS2Config loads S2 client settings from environment variables.
 func LoadS2Config() S2ClientConfig {
-	baseURL := os.Getenv("S2_LEDGER_BASE_URL")
+	baseURL := os.Getenv("NEIGHBOR_BASE_URL")
+	if baseURL == "" {
+		baseURL = os.Getenv("S2_LEDGER_BASE_URL")
+	}
 	if baseURL == "" {
 		baseURL = DefaultS2BaseURL
 	}
+
 	return S2ClientConfig{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Timeout: 5 * time.Second,
