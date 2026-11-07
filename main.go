@@ -596,10 +596,19 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		SELECT id, COALESCE(job_id::text, ''), transaction_reference, type, status,
-		       ledger_amount, gateway_amount, difference_amount, description,
-		       resolution_notes, resolved_by, created_at
-		FROM discrepancy_exceptions`
+		SELECT id,
+		       COALESCE(job_id::text, ''),
+		       reference_id::text,
+		       CASE discrepancy_type
+		            WHEN 'MISSING_IN_SETTLEMENT' THEN 'MISSING_IN_GATEWAY'
+		            WHEN 'STATUS_CONFLICT'       THEN 'STATUS_MISMATCH'
+		            ELSE discrepancy_type
+		       END,
+		       status,
+		       expected_amount, actual_amount, difference_amount,
+		       format('%s: expected %s %s, actual %s', discrepancy_type, expected_amount, currency, actual_amount),
+		       resolution_notes, NULL::text, created_at
+		FROM exceptions`
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
