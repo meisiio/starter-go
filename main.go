@@ -170,7 +170,7 @@ type logEntry struct {
 	Message       string `json:"message"`
 	Method        string `json:"method,omitempty"`
 	Path          string `json:"path,omitempty"`
-	StatusCode    int    `json:"status_code,omitempty"`
+	Status        int    `json:"status,omitempty"`
 	DurationMs    int64  `json:"duration_ms,omitempty"`
 }
 
@@ -204,14 +204,14 @@ func (s *Server) correlationMiddleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), correlationKey, cid)
 
 		start := time.Now()
-		rw := &statusResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		rw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
 
 		next.ServeHTTP(rw, r.WithContext(ctx))
 
 		logJSON("INFO", s.cfg.ServiceName, cid, "HTTP Request completed", map[string]any{
 			"method":      r.Method,
 			"path":        r.URL.Path,
-			"status_code": rw.statusCode,
+			"status":      rw.status,
 			"duration_ms": time.Since(start).Milliseconds(),
 		})
 	})
@@ -234,11 +234,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 type statusResponseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	status int
 }
 
 func (rw *statusResponseWriter) WriteHeader(code int) {
-	rw.statusCode = code
+	rw.status = code
 	rw.ResponseWriter.WriteHeader(code)
 }
 
