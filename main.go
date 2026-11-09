@@ -170,7 +170,7 @@ type logEntry struct {
 	Message       string `json:"message"`
 	Method        string `json:"method,omitempty"`
 	Path          string `json:"path,omitempty"`
-	StatusCode    int    `json:"status_code,omitempty"`
+	Status        int    `json:"status,omitempty"`
 	DurationMs    int64  `json:"duration_ms,omitempty"`
 }
 
@@ -204,14 +204,14 @@ func (s *Server) correlationMiddleware(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), correlationKey, cid)
 
 		start := time.Now()
-		rw := &statusResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		rw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
 
 		next.ServeHTTP(rw, r.WithContext(ctx))
 
 		logJSON("INFO", s.cfg.ServiceName, cid, "HTTP Request completed", map[string]any{
 			"method":      r.Method,
 			"path":        r.URL.Path,
-			"status_code": rw.statusCode,
+			"status":      rw.status,
 			"duration_ms": time.Since(start).Milliseconds(),
 		})
 	})
@@ -234,11 +234,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 type statusResponseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	status int
 }
 
 func (rw *statusResponseWriter) WriteHeader(code int) {
-	rw.statusCode = code
+	rw.status = code
 	rw.ResponseWriter.WriteHeader(code)
 }
 
@@ -596,10 +596,19 @@ func (s *Server) ListExceptionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		SELECT id, COALESCE(job_id::text, ''), transaction_reference, type, status,
-		       ledger_amount, gateway_amount, difference_amount, description,
-		       resolution_notes, resolved_by, created_at
-		FROM discrepancy_exceptions`
+		SELECT id,
+		       COALESCE(job_id::text, ''),
+		       reference_id::text,
+		       CASE discrepancy_type
+		            WHEN 'MISSING_IN_SETTLEMENT' THEN 'MISSING_IN_GATEWAY'
+		            WHEN 'STATUS_CONFLICT'       THEN 'STATUS_MISMATCH'
+		            ELSE discrepancy_type
+		       END,
+		       status,
+		       expected_amount, actual_amount, difference_amount,
+		       format('%s: expected %s %s, actual %s', discrepancy_type, expected_amount, currency, actual_amount),
+		       resolution_notes, NULL::text, created_at
+		FROM exceptions`
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}

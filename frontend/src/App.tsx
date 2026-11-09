@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import './App.css';
 import { api } from './api/client';
+import { ProblemAlert } from './ProblemAlert';
+import type { Problem } from './ProblemAlert';
 
 interface HealthData {
   status: string;
@@ -48,6 +50,8 @@ export default function App() {
   const [loadingExceptions, setLoadingExceptions] = useState<boolean>(false);
   const [reconciling, setReconciling] = useState<boolean>(false);
 
+  const [listProblem, setListProblem] = useState<Problem | null>(null);
+
   // Fetch /health (GEN-10)
   const fetchHealth = async () => {
     setHealthLoading(true);
@@ -89,10 +93,16 @@ export default function App() {
   const fetchExceptions = async () => {
     setLoadingExceptions(true);
     try {
-      const { data } = await api.GET('/api/v1/exceptions', {
-        params: { query: { limit: 50 } },
-      });
+
+      const { data, error } = await api.GET('/api/v1/exceptions', { params: { query: { limit: 50 } } });
+      if (error) {
+        setListProblem(error as Problem);
+        setExceptions([]);
+        return;
+      }
+      setListProblem(null);
       setExceptions((data?.items ?? []) as ExceptionItem[]);
+
     } catch (err) {
       console.error('Failed to load exceptions', err);
     } finally {
@@ -340,6 +350,7 @@ export default function App() {
         </div>
 
         <div className="table-responsive">
+          <ProblemAlert problem={listProblem} />
           <table className="custom-table" id="exceptions-table">
             <thead>
               <tr>

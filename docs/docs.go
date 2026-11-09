@@ -10,17 +10,67 @@ const docTemplate = `{
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
         "contact": {
-            "name": "S6-RCN Engineering Team",
-            "email": "rcn-team@labbank.example"
+            "name": "reza.shalchian",
+            "email": "rezammh823@gmail.com"
         },
         "version": "{{.Version}}"
     },
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/accounts/{id}/exceptions": {
+            "get": {
+                "description": "Enables Team 1 (Account - Consumer) to query discrepancy exceptions for a specific bank account.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Reconciliation Exceptions"
+                ],
+                "summary": "Get exceptions by account ID (Consumer Loop Endpoint)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Target account UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/main.AccountExceptionItem"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/main.ProblemDetails"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.ProblemDetails"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/main.ProblemDetails"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/exceptions": {
             "get": {
-                "description": "Retrieve a paginated list of financial discrepancies identified by reconciliation jobs.",
+                "description": "Paginated list of financial discrepancies, oldest first (created_at, id). Cursor pagination (GEN-09).",
                 "produces": [
                     "application/json"
                 ],
@@ -28,11 +78,37 @@ const docTemplate = `{
                     "Reconciliation Exceptions"
                 ],
                 "summary": "List discrepancies and exceptions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "OPEN | UNDER_REVIEW | RESOLVED | DISMISSED",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1..200, default 50; above 200 returns 400",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/main.ExceptionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/main.ProblemDetails"
                         }
                     },
                     "500": {
@@ -118,6 +194,38 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "main.AccountExceptionItem": {
+            "type": "object",
+            "properties": {
+                "actual_amount": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "difference": {
+                    "type": "integer"
+                },
+                "discrepancy_type": {
+                    "type": "string"
+                },
+                "expected_amount": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "reference_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "main.Discrepancy": {
             "type": "object",
             "properties": {

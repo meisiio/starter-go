@@ -1,5 +1,26 @@
 basePath: /
 definitions:
+  main.AccountExceptionItem:
+    properties:
+      actual_amount:
+        type: integer
+      created_at:
+        type: string
+      currency:
+        type: string
+      difference:
+        type: integer
+      discrepancy_type:
+        type: string
+      expected_amount:
+        type: integer
+      id:
+        type: string
+      reference_id:
+        type: string
+      status:
+        type: string
+    type: object
   main.Discrepancy:
     properties:
       created_at:
@@ -114,17 +135,64 @@ definitions:
 host: localhost:8086
 info:
   contact:
-    email: rcn-team@labbank.example
-    name: S6-RCN Engineering Team
+    email: rezammh823@gmail.com
+    name: reza.shalchian
   description: Official OpenAPI Specification for LabBank Reconciliation & Exceptions
     Service (S6-RCN).
   title: LabBank - S6-RCN Reconciliation & Exceptions Service API
   version: 1.0.0
 paths:
+  /api/v1/accounts/{id}/exceptions:
+    get:
+      description: Enables Team 1 (Account - Consumer) to query discrepancy exceptions
+        for a specific bank account.
+      parameters:
+      - description: Target account UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.AccountExceptionItem'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.ProblemDetails'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/main.ProblemDetails'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.ProblemDetails'
+      summary: Get exceptions by account ID (Consumer Loop Endpoint)
+      tags:
+      - Reconciliation Exceptions
   /api/v1/exceptions:
     get:
-      description: Retrieve a paginated list of financial discrepancies identified
-        by reconciliation jobs.
+      description: Paginated list of financial discrepancies, oldest first (created_at,
+        id). Cursor pagination (GEN-09).
+      parameters:
+      - description: OPEN | UNDER_REVIEW | RESOLVED | DISMISSED
+        in: query
+        name: status
+        type: string
+      - description: 1..200, default 50; above 200 returns 400
+        in: query
+        name: limit
+        type: integer
+      - description: next_cursor of the previous page
+        in: query
+        name: cursor
+        type: string
       produces:
       - application/json
       responses:
@@ -132,6 +200,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/main.ExceptionsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.ProblemDetails'
         "500":
           description: Internal Server Error
           schema:
